@@ -1,0 +1,205 @@
+---
+title: "Clustering with minimum and maximum size"
+description: |
+ Do you want to create hierarchical clusters, but with minimum and maximum size constraint? 
+author:
+  - name: Martine Wauben 
+    url: https://github.com/MHWauben
+date: 2019-03-01
+categories:
+  - RStats
+  - Clustering
+  - Unsupervised
+output:
+  distill::distill_article:
+    self_contained: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(tidyverse)
+library(ggthemes)
+library(cluster)
+min_max_size_clustering <- function(data, max_cluster_size = 59, min_cluster_size = 30) {
+  start_time <- Sys.time()
+  i <- 2
+  loopnum <- 1
+  redo_clusters <- data
+  dat_size <- nrow(redo_clusters)
+  saved_clusters <- data.frame(matrix(ncol = (ncol(data) + 2), nrow = 0))
+  colnames(saved_clusters) <- c(colnames(data), "labels", "loopnum")
+  
+  while(dat_size > 0){
+    treemodel <- hclust(dist(redo_clusters))
+    repeat{
+      clusterlabels <- cutree(treemodel, i)
+      clustersizes <- cbind(redo_clusters, labels = clusterlabels, loopn = rep(loopnum, nrow(redo_clusters)))
+      clustersums <- clustersizes %>% group_by(labels) %>% summarise(size = n()) 
+      maxsize <- max(clustersums$size)
+      thirdlargestsize <- ifelse(is.na(nth(clustersums$size, 3)), 0, min_cluster_size)
+      accurate_clusters <- (clustersizes %>% 
+                              group_by(labels) %>% 
+                              summarise(size = n()) %>% 
+                              filter(size >= thirdlargestsize) %>% 
+                              select(labels)
+                            )[[1]]
+      if(maxsize <= max_cluster_size){
+        break
+      }
+      i = i + 1
+    }
+    saved_clusters <- rbind(saved_clusters, (clustersizes %>% filter(labels %in% accurate_clusters)))
+    redo_clusters <- clustersizes %>% filter(!(labels %in% accurate_clusters))
+    redo_clusters <- redo_clusters[,1:2]
+    dat_size <- nrow(redo_clusters)
+    print(paste("Number of clusters in this round: ", i))
+    print(paste("Round ", loopnum, " is over"))
+    i <- 2
+    loopnum <- loopnum + 1
+  }
+  running_time <- Sys.time() - start_time
+  print(paste("Total running time was: ", running_time))
+  return(saved_clusters)
+}
+```
+
+I was lucky to get a place on Techionista's programme to help women get into tech roles, in collaboration with Microsoft. As part of Microsoft's Professional Programme in Data Science, we had to tackle real business problems using data science techniques.
+
+The challenge we were tackling is improving how event visitors can travel to and from events more efficiently, so there is less clogging of transport links. Our idea: provide a coach service that allows visitors to 'carpool' together. This way, the event can start the minute they get on the bus, and we may reduce the number of cars on the road 30-fold!
+
+However, this leaves one problem: where do the buses pick up people?
+
+This is a clustering problem: which groups of visitors live close to each other? However, most clustering algorithms do not allow constraints on the maximum size of clusters. Buses do have a maximum capacity! So we set out to design an algorithm that finds the most optimal clusters, where each individual cluster has a minimum of 30 individuals, and a maximum of 59. By finding these groups, we can optimise pick-up locations!
+
+#### Loading and assessing data  
+This demonstration is based on the scenario that an event is taking part in Amsterdam, and visitors are to be allocated to bus seats to be taken to the event. 
+
+We acquired a theoretical dataset for visitors to a particular event, and where in the Netherlands they may be ordinarily based. 
+
+```{r load data, include = FALSE}
+data <- na.omit(read.csv("https://raw.githubusercontent.com/MHWauben/min_max_size_clustering/master/demo/visitor_locations.csv"))
+head(data)
+```
+
+```{r data summary}
+summary(data)
+```
+
+*Note*: The data is structured such that there are some longitude / latitude combinations with multiple people, so we should duplicate those rows so seats are appropriately allocated.
+
+```{r one visitor one row}
+data <- data[rep(row.names(data), data$number), 1:2]
+names(data) <- c("lat", "lon")
+```
+
+#### National visitor distribution  
+
+Let's have a look where the visitors come from.
+
+```{r plot pre-clustering}
+ggplot(data = data, aes(lon, lat))+
+  geom_point(alpha = 0.2)+
+  theme_tufte()+
+  labs(x ="Longitude", y = "Latitude")
+```
+
+We see there are many visitors from near Amsterdam, who are unlikely to want to make use of the bus transport there. What does the distribution of distance-from-Amsterdam look like?
+
+```{r find out distance of visitors to the Amsterdam}
+# Lat & Lon of central Amsterdam location: 52.314762, 4.941845
+library(geosphere)
+distances <- distHaversine(data, c(52.314762, 4.941845), r=6378137) / 1000
+hist(distances)
+# This histogram looks as expected: most visitors come from closer to the Amsterdam than from further away!
+```
+
+Indeed, it looks like nearby people are overrepresented: however, they are unlikely to make use of a coach service. Thus, we want to remove these from our analysis. As a rule of thumb, we remove all visitors that live within a 35km radius of central Amsterdam.
+
+```{r remove visitors too close to Amsterdam}
+data_w_dist <- cbind(data, distances)
+# Remove everyone less than 35km away
+data_filtered <- data_w_dist %>%
+  filter(distances > 35)
+ggplot(data = data_filtered, aes(lon, lat))+
+  geom_point(alpha = 0.2)+
+  theme_tufte()+
+  labs(x ="Longitude", y = "Latitude")
+```
+
+### Clustering algorithm  
+
+We use repeated hierarchical clustering. This algorithm creates a dendrogram, combining those datapoints that are closest together one at a time. Therefore, one may cut this tree at any height to create a set number of clusters.  
+
+For the clustering, we use a random sample of 20% of the data: this is not only an estimate of likely demand for this service, but also cuts down on running time of the algorithm itself. 
+
+```{r clustering demonstration}
+set.seed(9876)
+reduced <- data_filtered[ sample(1:nrow(data_filtered), nrow(data_filtered)/5 ) , 1:2]
+ggplot(data = reduced, aes(lon, lat))+
+  geom_point(alpha = 0.3)+
+  theme_tufte()+
+  labs(x ="Longitude", y = "Latitude")
+# Normalise factors
+meanreduced_lat <- mean(reduced$lat)
+meanreduced_lon <- mean(reduced$lon)
+sdreduced_lat <- sd(reduced$lat)
+sdreduced_lon <- sd(reduced$lon)
+reduced_scaled <- data.frame(
+                  cbind(lat = ((reduced$lat - meanreduced_lat) / sdreduced_lat),
+                        lon = ((reduced$lon - meanreduced_lon) / sdreduced_lon)))
+clusters <- hclust(dist(reduced_scaled))
+plot(clusters)
+```
+
+We create repeated hierarchical clusterings, cut at different heights, to arrive at a dendrogram where the maximum cluster size is 59 (the number of seats per bus). The clusters with a reasonable number of visitors in it are saved, and the clustering algorithm is run again on the remaining visitors. This is repeated until all visitors are allocated a bus.
+
+
+```{r non-normalised algorithm}
+saved_clusters <- min_max_size_clustering(reduced_scaled, max_cluster_size = 59, min_cluster_size = 30)
+```
+
+
+#### Results  
+
+We first see how many people were allocated per bus, and how many buses are needed for this particular event.
+
+```{r assess the saved clusters}
+# Only reassign saved_clusters_plot when algorithm has run successfully!
+saved_clusters_plot <- saved_clusters %>%
+  mutate(lat = lat * sdreduced_lat + meanreduced_lat,
+         lon = lon * sdreduced_lon + meanreduced_lon)
+saved_clusters_plot$clustnum <- paste(as.character(saved_clusters_plot$labels), "-", as.character(saved_clusters_plot$loopn))
+# Calculate how many people per bus, and how many buses are needed
+saved_clusters_plot %>%
+  group_by(clustnum) %>%
+  summarise(count = n())
+length(unique(saved_clusters_plot$clustnum))
+```
+
+We can plot the groups of visitors, distributed across the country.
+
+```{r plot the saved clusters}
+clustercenters <- saved_clusters_plot %>%
+  group_by(clustnum) %>%
+  summarise(lat = mean(lat),
+            lon = mean(lon)) %>%
+  mutate(pointtype = "centers")
+ggplot(data = saved_clusters_plot, aes(lon, lat))+
+  geom_point(aes(col = as.factor(clustnum)), alpha = 0.2, size = 3)+
+  guides(col=FALSE)+
+  scale_fill_brewer(palette="Paired")+
+  theme_tufte()+
+  labs(x ="Longitude", y = "Latitude")
+```
+
+This plot shows the center of each cluster, which would be the optimal place for a pick-uppoint for that group.
+
+```{r plot where the buses will go}
+ggplot(data = saved_clusters_plot, aes(lon, lat))+
+  geom_point(aes(col = as.factor(clustnum)), alpha = 0.2, size = 3)+
+  geom_point(data = clustercenters, shape = 8, col = "red", size = 5)+
+  guides(col=FALSE)+
+  scale_fill_brewer(palette="Paired")+
+  theme_tufte()+
+  labs(x ="Longitude", y = "Latitude")
+```

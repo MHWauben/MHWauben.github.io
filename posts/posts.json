@@ -1,0 +1,58 @@
+[
+  {
+    "path": "posts/2020-07-20_astronauts/",
+    "title": "Astronauts",
+    "description": "How has spaceflight increased in frequency and length?",
+    "author": [
+      {
+        "name": "Martine Wauben",
+        "url": "https://github.com/MHWauben"
+      }
+    ],
+    "date": "2020-07-20",
+    "categories": [
+      "RStats",
+      "Tidytuesday",
+      "Visualisation"
+    ],
+    "preview": "posts/2020-07-20_astronauts/astronaut-graph.png",
+    "last_modified": "2020-07-25T10:08:37+01:00",
+    "input_file": "2020-07-20_astronauts.utf8.md"
+  },
+  {
+    "path": "posts/welcome/",
+    "title": "Welcome to Rstats and Recipes",
+    "description": "Welcome to our new blog, Rstats and Recipes. We hope you enjoy \nreading what we have to say!",
+    "author": [
+      {
+        "name": "Martine Wauben",
+        "url": {}
+      }
+    ],
+    "date": "2020-07-01",
+    "categories": [],
+    "preview": "posts/welcome/welcome-colours.jpg",
+    "last_modified": "2020-07-25T10:02:54+01:00",
+    "input_file": "welcome.utf8.md"
+  },
+  {
+    "path": "posts/2019-03-01_min-max-clustering/",
+    "title": "Clustering with minimum and maximum size",
+    "description": "Do you want to create hierarchical clusters, but with minimum and maximum size constraint?",
+    "author": [
+      {
+        "name": "Martine Wauben",
+        "url": "https://github.com/MHWauben"
+      }
+    ],
+    "date": "2019-03-01",
+    "categories": [
+      "RStats",
+      "Clustering",
+      "Unsupervised"
+    ],
+    "preview": "posts/2019-03-01_min-max-clustering/2019-03-01_min-max-clustering_files/figure-html5/plot pre-clustering-1.png",
+    "last_modified": "2020-07-25T10:07:29+01:00",
+    "input_file": "2019-03-01_min-max-clustering.utf8.md"
+  }
+]

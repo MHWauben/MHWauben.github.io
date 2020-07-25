@@ -1,0 +1,24 @@
+---
+title: "Welcome to Rstats and Recipes"
+description: |
+  Welcome to our new blog, Rstats and Recipes. We hope you enjoy 
+  reading what we have to say!
+author:
+  - name: Martine Wauben
+date: 2020-07-01
+preview: welcome-colours.jpg
+output:
+  distill::distill_article:
+    self_contained: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+# Learn more about creating blogs with Distill at:
+# https://rstudio.github.io/distill/blog.html
+
+```
+
+
+
