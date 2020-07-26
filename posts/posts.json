@@ -1,5 +1,25 @@
 [
   {
+    "path": "posts/2020-07-25_australia-animals/",
+    "title": "Australian animals",
+    "description": "Which Australian suburbs show most seasonality in dog noise complaints?",
+    "author": [
+      {
+        "name": "Martine Wauben",
+        "url": "https://github.com/MHWauben"
+      }
+    ],
+    "date": "2020-07-25",
+    "categories": [
+      "RStats",
+      "Tidytuesday",
+      "Visualisation"
+    ],
+    "preview": "posts/2020-07-25_australia-animals/complaint-places.png",
+    "last_modified": "2020-07-26T12:46:20+01:00",
+    "input_file": {}
+  },
+  {
     "path": "posts/2020-07-20_astronauts/",
     "title": "Astronauts",
     "description": "How has spaceflight increased in frequency and length?",
@@ -16,8 +36,8 @@
       "Visualisation"
     ],
     "preview": "posts/2020-07-20_astronauts/astronaut-graph.png",
-    "last_modified": "2020-07-25T10:08:37+01:00",
-    "input_file": "2020-07-20_astronauts.utf8.md"
+    "last_modified": "2020-07-25T09:51:47+01:00",
+    "input_file": {}
   },
   {
     "path": "posts/welcome/",
@@ -33,7 +53,7 @@
     "categories": [],
     "preview": "posts/welcome/welcome-colours.jpg",
     "last_modified": "2020-07-25T10:02:54+01:00",
-    "input_file": "welcome.utf8.md"
+    "input_file": {}
   },
   {
     "path": "posts/2019-03-01_min-max-clustering/",
@@ -45,14 +65,14 @@
         "url": "https://github.com/MHWauben"
       }
     ],
-    "date": "2019-03-01",
+    "date": "2019-01-03",
     "categories": [
       "RStats",
       "Clustering",
       "Unsupervised"
     ],
-    "preview": "posts/2019-03-01_min-max-clustering/2019-03-01_min-max-clustering_files/figure-html5/plot pre-clustering-1.png",
-    "last_modified": "2020-07-25T10:07:29+01:00",
-    "input_file": "2019-03-01_min-max-clustering.utf8.md"
+    "preview": "posts/2019-03-01_min-max-clustering/min-max-clustering.png",
+    "last_modified": "2020-07-25T09:51:47+01:00",
+    "input_file": {}
   }
 ]

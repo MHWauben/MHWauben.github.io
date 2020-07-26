@@ -1,0 +1,203 @@
+---
+title: "Australian animals"
+description: |
+ Which Australian suburbs show most seasonality in dog noise complaints?
+author:
+  - name: Martine Wauben 
+    url: https://github.com/MHWauben
+date: 2020-07-25
+categories:
+  - RStats
+  - Tidytuesday
+  - Visualisation
+preview: complaint-places.png
+output:
+  distill::distill_article:
+    self_contained: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+library(magrittr)
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(forecast)
+library(tibble)
+library(RJSONIO)
+library(sf)
+library(rnaturalearth)
+```
+
+## Tidy Tuesday: 21 July 2020
+
+This week's data can be [found here](https://github.com/rfordatascience/tidytuesday/blob/master/data/2020/2020-07-21/readme.md). It is about animal complaints in Australia: a perfect time to practice my timeseries analysis and mapping skills!
+
+```{r load data, message = FALSE}
+animal_complaints <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-21/animal_complaints.csv') %>%
+  janitor::clean_names(.) %>%
+  dplyr::mutate(year = stringr::str_extract(date_received, '[0-9]{4}'),
+                month = stringr::str_extract(date_received, '[a-zA-Z]*'),
+                date_real = as.Date(paste0('1 ', date_received), format = '%d %B %Y'),
+                date_x = as.Date(paste0('1-', month, '-2020'), format = '%d-%B-%Y'))
+head(animal_complaints)
+```
+
+The general animal_complaints dataset contains data on complaints made about animals in various divisions, including the date. Is there seasonal variation in which complaints are made? 
+
+```{r complaints seasonality}
+animal_complaints %>%
+  dplyr::group_by(animal_type, complaint_type, year, date_real, date_x) %>%
+  dplyr::summarise(number = n()) %>%
+  ggplot(aes(x = date_x, y = number, colour = year))+
+  geom_line()+
+  facet_grid(animal_type~complaint_type, scales = 'free_y')+
+  theme_minimal()+
+  scale_x_date(breaks = '3 months', date_labels = '%B')+
+  labs(title = 'Number of complaints over time',
+       subtitle = 'Colours represent different years',
+       x = 'Time of year',
+       y = 'Number of complaints')+
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 90),
+        strip.text.y = element_text(angle = 0))
+```
+
+It appears there is seasonal variation in some types of complaints, but not others. Particularly, noise complaints for dogs are much more common during Australian winter: perhaps dogs kept indoors more, or perhaps neighbours are bothered by noise more quickly when they stay inside. 
+
+Is this true for all areas?
+
+```{r timeseries only, fig.height = 8}
+dog_noise <- animal_complaints %>%
+  dplyr::filter(animal_type == 'dog' & complaint_type == 'Noise') %>%
+  dplyr::group_by(suburb, year, date_real, date_x) %>%
+  dplyr::summarise(number = n()) %>%
+  dplyr::ungroup() %>%
+  dplyr::arrange(suburb, date_real)
+ggplot(dog_noise, aes(x = date_real, y = number))+
+  geom_line()+
+  facet_wrap(suburb~.)+
+  theme_minimal()+
+  labs(title = 'Number of dog noise complaints over time',
+       x = 'Date',
+       y = 'Number of complaints')+
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 90),
+        strip.text.y = element_text(angle = 0))
+```
+
+Some regions have stronger seasonal patterns than others. Can we quantify how 'seasonal' different areas are in their complaint behaviour?
+
+First, we detect the trend in the timeseries - it looks fairly stable, but worth removing any upward trend due to population growth. We do this for each area separately. 
+
+```{r prep timeseries}
+all_months <- expand.grid(suburb = unique(dog_noise$suburb),
+                          date_real = unique(dog_noise$date_real))
+suburbs_ts <- dog_noise %>%
+  dplyr::select(suburb, date_real, number) %>%
+  dplyr::full_join(all_months, by = c("suburb", "date_real"))%>%
+  dplyr::mutate(number = ifelse(is.na(number), 0, number)) %>%
+  dplyr::arrange(suburb, date_real)
+# Save a list with the timeseries for each suburb saved as a separate vector
+suburbs_list <- split(suburbs_ts$number, suburbs_ts$suburb)
+```
+
+We use a moving average to calculate the trend over the course of a year. 
+
+```{r detect trend}
+# Function to calculate moving average
+month_ma <- function(ts){
+  forecast::ma(ts, order = 12, centre = T)
+}
+suburbs_trends <- lapply(suburbs_list, month_ma)
+```
+
+We assume this timeseries is additive (not multiplicative), and so we can subtract the moving average trend from the true numbers to arrive as the seasonal component by itself. The mapply function returns each suburb as a column, with a row per month. 
+
+```{r subtract trend}
+suburbs_seasons <- mapply('-', suburbs_list, suburbs_trends)
+rownames(suburbs_seasons) <- as.character(unique(dog_noise$date_real))
+head(suburbs_seasons[complete.cases(suburbs_seasons), 1:5])
+```
+
+To get average seasonality across the dataset for each suburb, we take column means. 
+
+```{r average seasonality}
+avg_seasonality <- tibble::enframe(colMeans(suburbs_seasons, na.rm = T))
+```
+
+Let's see which suburbs are the most seasonal in their noise complaints!
+
+```{r seasonality bars}
+num_suburbs <- 20
+avg_seasonality %>%
+  dplyr::top_n(num_suburbs) %>%
+  ggplot(aes(x = reorder(name, value), y = value))+
+  geom_bar(stat = 'identity')+
+  coord_flip()+
+  theme_minimal()+
+  labs(title = 'Seasonality of noise complaints in different suburbs',
+       subtitle = paste0('Showing ', num_suburbs, ' most seasonal suburbs'),
+       x = 'Average seasonality',
+       y = 'Suburb')
+```
+
+
+## Mapping complainers
+
+Can we map where these places are, and see if there are geographic patterns in where complaints fluctuate more?
+
+We use the openstreetmap API to get latitude and longitudes for the suburbs.
+
+```{r geocode places, warning = FALSE}
+rows <- nrow(avg_seasonality)
+counter <- 1
+avg_seasonality$lon[counter] <- 0
+avg_seasonality$lat[counter] <- 0
+while (counter <= rows){
+  CityName <- gsub(' ','%20',avg_seasonality$name[counter]) #remove space for URLs
+  url <- paste0(
+    "http://nominatim.openstreetmap.org/search?city="
+    , CityName
+    , "&countrycodes=AU&limit=9&format=json")
+  x <- RJSONIO::fromJSON(url)
+  if(is.vector(x)){
+    avg_seasonality$lon[counter] <- x[[1]]$lon
+    avg_seasonality$lat[counter] <- x[[1]]$lat    
+  }
+  counter <- counter + 1
+}
+```
+
+Now, get a map shapefile from the `rnaturalearth` package, and convert the longitude / latitude columns into UTM projections to fit on top of it. 
+
+```{r visualise places}
+aus <- sf::st_as_sf(rnaturalearth::ne_countries(country = 'Australia'))
+loc_season <- avg_seasonality %>%
+  dplyr::filter(lon != 0) %>%
+  sf::st_as_sf(., coords = c('lon', 'lat'), crs = 4326)
+trans_loc <- sf::st_transform(loc_season, sf::st_crs("+proj=utm +zone=51 ellps=WGS84"))
+
+ggplot(data = aus)+
+  geom_sf()+
+  geom_sf(data = trans_loc, aes(colour = value), alpha = 0.4)+
+  labs(title = 'Seasonality of dog noise complaints in Australian suburbs',
+       colour = 'Seasonality index')+
+  theme_minimal()
+```
+
+There are some suburbs bunched together around Townsville. Let's zoom in on that. 
+
+```{r zoom map}
+ggplot(data = aus)+
+  geom_sf()+
+  geom_sf(data = trans_loc, aes(colour = value), alpha = 0.8)+
+  labs(title = 'Seasonality of dog noise complaints in Townsville suburbs',
+       colour = 'Seasonality index')+
+  theme_minimal()+
+  coord_sf(xlim = c(145.8, 147.5), ylim = c(-20, -18.5))
+```
+
+There are no obvious geographic patterns. Clearly I need to go talk to some Australians to be able to explain these patterns!
+
+
