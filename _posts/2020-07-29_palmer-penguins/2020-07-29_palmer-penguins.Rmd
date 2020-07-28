@@ -1,0 +1,125 @@
+---
+title: "Australian animals"
+description: |
+ Which Australian suburbs show most seasonality in dog noise complaints?
+author:
+  - name: Martine Wauben 
+    url: https://github.com/MHWauben
+date: 2020-07-25
+categories:
+  - RStats
+  - Tidytuesday
+  - Visualisation
+preview: complaint-places.png
+output:
+  distill::distill_article:
+    self_contained: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+library(magrittr)
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(rsample)
+library(recipes)
+library(parsnip)
+library(randomForest)
+```
+
+## Tidy Tuesday: 21 July 2020
+
+This week's data can be [found here](https://github.com/rfordatascience/tidytuesday/blob/master/data/2020/2020-07-28/readme.md). It is about penguin observations at the Palmer station. 
+
+```{r load data, message = FALSE}
+raw_penguins <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-28/penguins_raw.csv') %>%
+  janitor::clean_names()
+head(raw_penguins)
+```
+
+First: what's happening with the penguin species and islands? Do the species mix, or do they each have their own islands?
+
+```{r vis islands}
+ggplot(raw_penguins, aes(x = island, y = species))+
+  geom_bin2d()+
+  labs(title = 'Penguin species distribution on the Anvers islands',
+       subtitle = 'Adelie penguins move about; the others stay put')+
+  theme_minimal()
+```
+
+There are columns for egg shell isotopes. They are used as proxies for penguin health. However, can we use the same values for each species?
+
+```{r vis eggs}
+ggplot(raw_penguins, aes(x = delta_15_n_o_oo, y = delta_13_c_o_oo, colour = species))+
+  geom_point()+
+  labs(title = 'Eggshell isotopes of Palmer penguins',
+       x = 'Delta 15 N o/oo',
+       y = 'Delta 13 C o/oo',
+       colour = '')+
+  theme_minimal()+
+  theme(legend.position = 'bottom')+
+  guides(color = guide_legend(nrow = 2))
+```
+
+This dataset has missing values for several columns. Can we use ML to fill in the delta values with plausible values, based on measurements from the penguin's body? 
+
+We'll start with the N value. 
+
+```{r prep model data}
+model_penguins <- raw_penguins %>%
+  dplyr::select(body_mass_g, tidyselect::matches('_mm'), tidyselect::matches('oo')) %>%
+  dplyr::filter(!is.na(body_mass_g))
+true_missing <- dplyr::filter(model_penguins, is.na(delta_15_n_o_oo))
+
+
+non_missing <- dplyr::filter(model_penguins, !is.na(delta_15_n_o_oo)) %>%
+  dplyr::select(-delta_13_c_o_oo)
+```
+
+First, we split data into training and test sets: we will train the model using the training data, and then see how it performs on the testing data (which the model has not seen before).
+
+```{r train test}
+penguin_split <- rsample::initial_split(non_missing, prop = 0.8)
+```
+
+```{r prep recipe}
+penguin_recipe <- rsample::training(penguin_split) %>%
+  recipes::recipe(delta_15_n_o_oo ~ .) %>%
+  recipes::step_center(recipes::all_predictors(), 
+                       -recipes::all_outcomes()) %>%
+  recipes::step_scale(recipes::all_predictors(), 
+                      -recipes::all_outcomes()) %>%
+  recipes::prep()
+
+penguin_test <- penguin_recipe %>%
+  recipes::bake(rsample::testing(penguin_split))
+```
+
+These steps pre-process the data, so it's nicely centered and scaled so outliers should not affect our results as much. To see what our training looks like, we use the `juice` function.
+
+```{r glimpse prep training data}
+penguin_training <- recipes::juice(penguin_recipe)
+head(penguin_training)
+```
+
+```{r init models}
+pen_rf <- parsnip::rand_forest(trees = 100, mode = "regression") %>%
+  parsnip::set_engine("randomForest") %>%
+  parsnip::fit(delta_15_n_o_oo ~ ., data = penguin_training)
+```
+
+```{r predict outcomes}
+penguin_test$predictions <- predict(pen_rf, penguin_test)[[1]]
+ggplot(penguin_test, aes(x = delta_15_n_o_oo, y = predictions))+
+  geom_point()+
+  geom_abline(intercept = 0, slope = 1, colour = 'blue')+
+  coord_fixed()+
+  xlim(c(8,10))+
+  ylim(c(8, 10))
+```
+
+```{r accuracy metrics}
+yardstick::metrics(penguin_test, truth = delta_15_n_o_oo, estimate = predictions)
+```
+
