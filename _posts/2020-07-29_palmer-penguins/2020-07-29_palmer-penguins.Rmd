@@ -1,16 +1,16 @@
 ---
-title: "Australian animals"
+title: "Palmer penguins"
 description: |
- Which Australian suburbs show most seasonality in dog noise complaints?
+ Applying ML techniques to impute missing values: using the tidymodels toolkit
 author:
   - name: Martine Wauben 
     url: https://github.com/MHWauben
-date: 2020-07-25
+date: 2020-07-29
 categories:
   - RStats
   - Tidytuesday
-  - Visualisation
-preview: complaint-places.png
+  - Machine learning
+preview: missing-penguins.png
 output:
   distill::distill_article:
     self_contained: false
@@ -26,6 +26,8 @@ library(rsample)
 library(recipes)
 library(parsnip)
 library(randomForest)
+library(xgboost)
+library(kknn)
 ```
 
 ## Tidy Tuesday: 21 July 2020
@@ -38,17 +40,7 @@ raw_penguins <- readr::read_csv('https://raw.githubusercontent.com/rfordatascien
 head(raw_penguins)
 ```
 
-First: what's happening with the penguin species and islands? Do the species mix, or do they each have their own islands?
-
-```{r vis islands}
-ggplot(raw_penguins, aes(x = island, y = species))+
-  geom_bin2d()+
-  labs(title = 'Penguin species distribution on the Anvers islands',
-       subtitle = 'Adelie penguins move about; the others stay put')+
-  theme_minimal()
-```
-
-There are columns for egg shell isotopes. They are used as proxies for penguin health. However, can we use the same values for each species?
+There are columns for egg shell isotopes. They are used as proxies for penguin health. 
 
 ```{r vis eggs}
 ggplot(raw_penguins, aes(x = delta_15_n_o_oo, y = delta_13_c_o_oo, colour = species))+
@@ -62,9 +54,9 @@ ggplot(raw_penguins, aes(x = delta_15_n_o_oo, y = delta_13_c_o_oo, colour = spec
   guides(color = guide_legend(nrow = 2))
 ```
 
-This dataset has missing values for several columns. Can we use ML to fill in the delta values with plausible values, based on measurements from the penguin's body? 
+Unfortunately, this dataset has missing values for several these eggshell isotopes. Can we use ML to fill in the delta values with plausible values, based on measurements from the penguin's body? A good reason to test out the new [tidymodels](https://www.tidymodels.org/) packages!
 
-We'll start with the N value. 
+We'll demonstrate this idea with the Delta 15 N o/oo value. First, we have to prepare the penguins dataset, and save the rows with missing values separately from the complete data. We'll use the complete data to train and test the model, before applying the best one to the data with missing values. 
 
 ```{r prep model data}
 model_penguins <- raw_penguins %>%
@@ -83,6 +75,8 @@ First, we split data into training and test sets: we will train the model using 
 penguin_split <- rsample::initial_split(non_missing, prop = 0.8)
 ```
 
+Using the training data, we define pre-processing steps (centering and scaling). We then use the `bake` function to apply those same preprocessing steps to the testing data. 
+
 ```{r prep recipe}
 penguin_recipe <- rsample::training(penguin_split) %>%
   recipes::recipe(delta_15_n_o_oo ~ .) %>%
@@ -96,18 +90,22 @@ penguin_test <- penguin_recipe %>%
   recipes::bake(rsample::testing(penguin_split))
 ```
 
-These steps pre-process the data, so it's nicely centered and scaled so outliers should not affect our results as much. To see what our training looks like, we use the `juice` function.
+These steps pre-process the data, so it's nicely centered and scaled so outliers should not affect our results as much. To see what our training data looks like, we use the `juice` function.
 
 ```{r glimpse prep training data}
 penguin_training <- recipes::juice(penguin_recipe)
 head(penguin_training)
 ```
 
+To fit models, we use the `parsnip` package, which currently has [a few engines](https://www.tidymodels.org/find/parsnip) set up and ready to go.
+
 ```{r init models}
 pen_rf <- parsnip::rand_forest(trees = 100, mode = "regression") %>%
   parsnip::set_engine("randomForest") %>%
   parsnip::fit(delta_15_n_o_oo ~ ., data = penguin_training)
 ```
+
+Finally, we generate predictions for our testing data. If we plot the predictions against the true Delta 15C o/oo values, how accurate is it?
 
 ```{r predict outcomes}
 penguin_test$predictions <- predict(pen_rf, penguin_test)[[1]]
@@ -119,7 +117,85 @@ ggplot(penguin_test, aes(x = delta_15_n_o_oo, y = predictions))+
   ylim(c(8, 10))
 ```
 
+It looks more or less accurate, with an emphasis on more or less! To get precise accuracy metrics, we use the `yardstick` package. 
+
 ```{r accuracy metrics}
-yardstick::metrics(penguin_test, truth = delta_15_n_o_oo, estimate = predictions)
+rf_metrics <- yardstick::metrics(penguin_test, truth = delta_15_n_o_oo, estimate = predictions)
+rf_metrics
 ```
+
+Let's see if a different algorithm gets us better results! To see which hyperparameters go with each modeltype function, find your model in the [documentation list](https://www.tidymodels.org/find/parsnip). 
+
+```{r boosted}
+pen_xgb <- parsnip::boost_tree(mtry = 3, trees = 100, mode = "regression") %>%
+  parsnip::set_engine("xgboost") %>%
+  parsnip::fit(delta_15_n_o_oo ~ ., data = penguin_training)
+penguin_test$xgb_predictions <- predict(pen_xgb, penguin_test)[[1]]
+ggplot(penguin_test, aes(x = delta_15_n_o_oo, y = xgb_predictions))+
+  geom_point()+
+  geom_abline(intercept = 0, slope = 1, colour = 'blue')+
+  coord_fixed()+
+  xlim(c(8,10))+
+  ylim(c(8, 10))
+```
+
+```{r boosted metrics}
+xgb_metrics <- yardstick::metrics(penguin_test, truth = delta_15_n_o_oo, estimate = xgb_predictions)
+xgb_metrics
+```
+
+Interestingly, although the residuals appear more randomly distributed with this method, the R squared value is lower than for the random forest model. Let's try another type of model.
+
+```{r knn}
+pen_knn <- parsnip::nearest_neighbor(neighbors = 10, mode = "regression") %>%
+  parsnip::set_engine("kknn") %>%
+  parsnip::fit(delta_15_n_o_oo ~ ., data = penguin_training)
+penguin_test$knn_predictions <- predict(pen_knn, penguin_test)[[1]]
+ggplot(penguin_test, aes(x = delta_15_n_o_oo, y = knn_predictions))+
+  geom_point()+
+  geom_abline(intercept = 0, slope = 1, colour = 'blue')+
+  coord_fixed()+
+  xlim(c(8,10))+
+  ylim(c(8, 10))
+```
+
+```{r knn metrics}
+knn_metrics <- yardstick::metrics(penguin_test, truth = delta_15_n_o_oo, estimate = knn_predictions)
+knn_metrics
+```
+
+Because yardstick returns data in a 'tidy' format, we can join them all together to compare them side-by-side. 
+
+```{r combine metrics}
+all_metrics <- dplyr::left_join(rf_metrics, xgb_metrics, by = c(".metric", ".estimator")) %>%
+  dplyr::left_join(knn_metrics, by = c(".metric", ".estimator"))
+colnames(all_metrics) <- c('metric', 'estimator', 'RF', 'XGBoost', 'KNN')
+all_metrics
+```
+
+K-nearest neighbours performs best on a first pass. However, there may be ways to make the other models perform better using hyperparameter tuning. This will be a topic for a future blogpost!
+
+Can we now use the fitted KNN model to fill the missing values? Remember to apply the pre-processing recipe to the new data, too!
+
+```{r fill missing values}
+prep_missing <- penguin_recipe %>%
+  recipes::bake(true_missing)
+prep_missing$knn_predictions <- predict(pen_knn, prep_missing)[[1]]
+```
+
+Do these newly predicted values show a similar pattern to the pattern in the original data?
+
+```{r fill missing datapoints}
+ggplot(prep_missing, aes(x = body_mass_g, y = knn_predictions))+
+  geom_point(colour = 'red')+
+  geom_point(data = penguin_test, colour = 'blue')+
+  labs(title = 'Relationship between predicted Delta 15 N o/oo values and body mass',
+       subtitle = 'Red is originally missing data; blue is testing sample',
+       x = 'Body mass (scaled & centered)',
+       y = 'KNN predicted Delta 15 N o/oo values')+
+  theme_minimal()
+```
+
+KNN appears to have produced helpful values with which to impute missing values!
+
 
