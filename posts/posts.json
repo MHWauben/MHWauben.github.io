@@ -1,5 +1,25 @@
 [
   {
+    "path": "posts/2020-07-29_palmer-penguins/",
+    "title": "Palmer penguins",
+    "description": "Applying ML techniques to impute missing values: using the tidymodels toolkit",
+    "author": [
+      {
+        "name": "Martine Wauben",
+        "url": "https://github.com/MHWauben"
+      }
+    ],
+    "date": "2020-07-29",
+    "categories": [
+      "RStats",
+      "Tidytuesday",
+      "Machine learning"
+    ],
+    "preview": "posts/2020-07-29_palmer-penguins/missing-penguins.png",
+    "last_modified": "2020-08-02T09:55:54+01:00",
+    "input_file": "2020-07-29_palmer-penguins.utf8.md"
+  },
+  {
     "path": "posts/2020-07-25_australia-animals/",
     "title": "Australian animals",
     "description": "Which Australian suburbs show most seasonality in dog noise complaints?",
