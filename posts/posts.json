@@ -1,5 +1,25 @@
 [
   {
+    "path": "posts/2020-08-09_europe-energy/",
+    "title": "Europe Energy",
+    "description": "Using echarts4r to create a treemap of nested types of energy usage.",
+    "author": [
+      {
+        "name": "Martine Wauben",
+        "url": "https://github.com/MHWauben"
+      }
+    ],
+    "date": "2020-08-09",
+    "categories": [
+      "RStats",
+      "Tidytuesday",
+      "Visualisation"
+    ],
+    "preview": "posts/2020-08-09_europe-energy/europe-energy.jpeg",
+    "last_modified": "2020-08-09T11:01:09+01:00",
+    "input_file": "2020-08-09_europe-energy.utf8.md"
+  },
+  {
     "path": "posts/2020-07-29_palmer-penguins/",
     "title": "Palmer penguins",
     "description": "Applying ML techniques to impute missing values: using the tidymodels toolkit",
