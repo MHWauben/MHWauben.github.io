@@ -1,0 +1,121 @@
+---
+title: "Europe Energy"
+description: |
+ Using echarts4r to create a treemap of nested types of energy usage. 
+author:
+  - name: Martine Wauben 
+    url: https://github.com/MHWauben
+date: 2020-08-09
+categories:
+  - RStats
+  - Tidytuesday
+  - Visualisation
+preview: europe-energy.jpeg
+output:
+  distill::distill_article:
+    self_contained: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+library(magrittr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(echarts4r)
+```
+
+## Tidy Tuesday: 4 August 2020
+
+This week's data can be [found here](https://github.com/rfordatascience/tidytuesday/blob/master/data/2020/2020-08-04/readme.md). It is about energy usage in Europe.
+
+```{r load data, message = FALSE}
+energy_types <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-08-04/energy_types.csv')
+```
+
+```{r overview chart}
+energy_types %>%
+  dplyr::group_by(country_name) %>%
+  dplyr::summarise_if(is.numeric, sum) %>%
+  echarts4r::e_charts(country_name) %>% 
+  echarts4r::e_parallel(`2016`, `2017`, `2018`) %>% 
+  echarts4r::e_theme('wonderland') %>%
+  echarts4r::e_title("Total energy usage by country")
+```
+
+
+I would like to visualise this data as a treemap using the `echarts4r` package. Treemaps visualise parts of a whole, and can be grouped. For example, in this dataset there are two levels of hydropower: there's a row for total hydropower, and a row for pumped hydropower which is a sub-set of the total. Treemaps can show such nested parts-of-a-whole simultaneously. Documentation on the package can be [found here](https://echarts4r.john-coene.com/). 
+
+Let's separate hydro power into correctly named rows: pumpedhydro power, and other hydropower. 
+
+```{r prep hydro parent child}
+hydro_prep <- energy_types %>%
+  dplyr::filter(grepl('hydro', tolower(type))) %>%
+  tidyr::pivot_wider(id_cols = country:country_name,
+                     names_from = type,
+                     values_from = `2016`:`2018`) %>%
+  dplyr::mutate(`2016_Other hydro` = `2016_Hydro` - `2016_Pumped hydro power`,
+                `2017_Other hydro` = `2017_Hydro` - `2017_Pumped hydro power`,
+                `2018_Other hydro` = `2018_Hydro` - `2018_Pumped hydro power`) %>%
+  tidyr::pivot_longer(cols = `2016_Hydro`:`2018_Other hydro`,
+                      names_to = c('year', 'type'),
+                      names_sep = '_',
+                      values_to = 'power') %>%
+  dplyr::filter(type != 'Hydro') %>%
+  dplyr::transmute(parent = 'Hydro',
+                child = type,
+                value = power,
+                year,
+                country_name)
+head(hydro_prep)
+```
+
+The other energy types don't have sub-types; thus we can simply transmute its columns into the right shape. 
+
+```{r prep other energy types}
+other_prep <- energy_types %>%
+  dplyr::filter(!grepl('hydro', tolower(type))) %>%
+  tidyr::pivot_longer(cols = `2016`:`2018`,
+                      names_to = 'year',
+                      values_to = 'power') %>%
+  dplyr::transmute(parent = type,
+                child = type,
+                value = power,
+                year,
+                country_name)
+```
+
+To see the best impact of the treemap visualisation, let's visualise the country that uses a mix of energy types, but with significant hydropower. We can select this based ont he 2018 energy usage with some filtering and arranging. 
+
+```{r country with most hydro}
+most_hydro <- energy_types %>%
+  dplyr::filter(level == 'Level 1') %>%
+  tidyr::pivot_wider(id_cols = country_name,
+                     names_from = type,
+                     values_from = `2018`) %>%
+  dplyr::arrange(-Hydro) %>%
+  dplyr::filter(Nuclear != 0, Geothermal != 0) %>%
+  slice(1) %>%
+  .$country_name
+```
+
+To create year-by-year treemaps, we can use a loop to filter the dataframe and create separate treemaps for separate years. The e_arrange function then puts them all in a row for us. 
+
+```{r treemaps, figures-side, fig.show="hold", out.width="50%"}
+years <- sort(unique(hydro_prep$year))
+data <- rbind(other_prep, hydro_prep) %>%
+  dplyr::filter(country_name == most_hydro)
+for(year_num in years){
+  data_filter <- data %>%
+    dplyr::filter(year == year_num) 
+  e <- data_filter %>%
+    echarts4r::e_charts() %>%
+    echarts4r::e_treemap(parent, child, value) %>% 
+    echarts4r::e_title(paste0("Energy in ", most_hydro, ", ", year_num)) %>%
+    echarts4r::e_theme('wonderland')
+  assign(paste0('treemap_', year_num), e)
+}
+echarts4r::e_arrange(treemap_2016, treemap_2017, treemap_2018, cols = 3, rows = 1)
+```
+
+
