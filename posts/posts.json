@@ -1,5 +1,26 @@
 [
   {
+    "path": "posts/2020-08-16_avatar-appa/",
+    "title": "Supervised ML with tidymodels and textrecipes",
+    "description": "Predicting Book from Avatar: The Last Airbender scripts",
+    "author": [
+      {
+        "name": "Martine Wauben",
+        "url": "https://github.com/MHWauben"
+      }
+    ],
+    "date": "2020-08-16",
+    "categories": [
+      "RStats",
+      "Tidytuesday",
+      "Machine learning",
+      "Supervised"
+    ],
+    "preview": "posts/2020-08-16_avatar-appa/avatar-heatmap.png",
+    "last_modified": "2020-08-16T21:46:29+01:00",
+    "input_file": "2020-08-16_avatar-appa.utf8.md"
+  },
+  {
     "path": "posts/2020-08-09_europe-energy/",
     "title": "Europe Energy",
     "description": "Using echarts4r to create a treemap of nested types of energy usage.",
