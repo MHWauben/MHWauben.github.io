@@ -1,5 +1,26 @@
 [
   {
+    "path": "posts/2020-08-23_endangered-plants/",
+    "title": "Uniquely threatened plants",
+    "description": "Detecting outliers in plant threat profiles with isolation forests",
+    "author": [
+      {
+        "name": "Martine Wauben",
+        "url": "https://github.com/MHWauben"
+      }
+    ],
+    "date": "2020-08-23",
+    "categories": [
+      "RStats",
+      "Tidytuesday",
+      "Machine learning",
+      "Unsupervised"
+    ],
+    "preview": "posts/2020-08-23_endangered-plants/correlations-1.png",
+    "last_modified": "2020-08-23T19:14:40+01:00",
+    "input_file": "2020-08-23_endangered-plants.utf8.md"
+  },
+  {
     "path": "posts/2020-08-16_avatar-appa/",
     "title": "Supervised ML with tidymodels and textrecipes",
     "description": "Predicting Book from Avatar: The Last Airbender scripts",

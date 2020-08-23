@@ -1,0 +1,128 @@
+---
+title: "Uniquely threatened plants"
+description: |
+ Detecting outliers in plant threat profiles with isolation forests
+author:
+  - name: Martine Wauben 
+    url: https://github.com/MHWauben
+date: 2020-08-23
+categories:
+  - RStats
+  - Tidytuesday
+  - Machine learning
+  - Unsupervised
+preview: correlations-1.png
+output:
+  distill::distill_article:
+    self_contained: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+library(magrittr)
+library(readr)
+library(dplyr)
+library(tidyselect)
+library(isotree)
+library(tidyr)
+library(ggplot2)
+```
+
+## Tidy Tuesday: 18 August 2020
+
+This week's data can be [found here](https://github.com/rfordatascience/tidytuesday/blob/master/data/2020/2020-08-18/readme.md). It is descriptions of different categories of threat types and actions taken for endangered plants. I explicitly re-named the column names to make them clearer.
+
+```{r load data, message = FALSE}
+plants <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-08-18/plants.csv') %>%
+  dplyr::rename('Threat: Agriculture & Aquaculture' = threat_AA,
+                'Threat: Biological Resource Use' = threat_BRU,
+                'Threat: Commercial Development' = threat_RCD,
+                'Threat: Invasive Species' = threat_ISGD,
+                'Threat: Energy Production & Mining' = threat_EPM,
+                'Threat: Climate Change' = threat_CC,
+                'Threat: Human Intrusions' = threat_HID,
+                'Threat: Pollution' = threat_P,
+                'Threat: Transportation Corridor' = threat_TS,
+                'Threat: Natural Systems Modifications' = threat_NSM,
+                'Threat: Geological Events' = threat_GE,
+                'Threat unknown' = threat_NA)
+```
+
+For this blog post, I will use [isolation forests](https://towardsdatascience.com/outlier-detection-with-isolation-forest-3d190448d45e) to detect outliers in this data. 
+
+## Isolation forests
+
+I would expect that different types of threat tend to cluster into groups. Are there any plants that are threatened in unique ways, or unique combinations of ways? Isolation forests let you find datapoints that are very easily separated from the rest of the data, and so gives an indication of how distinct each datapoint is from the others. This can let you quantify 'outlier-ness'.
+
+First, we select only the relevant data (ie. the threat columns). The data is already scaled as binary (0/1). We'll have to be careful not to re-sort the data rows, so we can match the raw data columns (which has only the threat columns) with the name lookup for each plant. 
+
+```{r data prep}
+raw_data <- dplyr::select_at(plants, dplyr::vars(tidyselect::starts_with('Threat')))
+```
+
+We then fit an isolation forest to the data. The isotree package can handle dataframes as input, so I don't need to convert the raw data.
+
+```{r isolation}
+first_trees <- isotree::isolation.forest(raw_data, ntrees = 150, nthreads = 1)
+# Apply isolation forest to data to acquire outlier scores
+plants$outlier_score <- predict(first_trees, raw_data)
+```
+
+What do the outlier scores look like? We would expect most of the scores to be fairly low, and see a low number of high-scoring outliers. 
+
+```{r plot outliers}
+hist(plants$outlier_score)
+```
+
+
+Which plants have the highest outlier scores?
+
+```{r highest score}
+plants %>%
+  dplyr::arrange(-outlier_score) %>%
+  head(.) %>%
+  dplyr::select(1:5)
+```
+
+Which column is the most correlated with outlier-ness?
+
+```{r correlations}
+# Select outlier score, and all threat columns
+cor_cols <- c('outlier_score', colnames(plants)[grepl('Threat', colnames(plants))])
+
+plants %>%
+  dplyr::select_at(cor_cols) %>%
+  dplyr::rename('Outlier score' = outlier_score) %>%
+  cor() %>%
+  as.data.frame() %>%
+  dplyr::add_rownames() %>%
+  tidyr::pivot_longer(cols = 2:14,
+                      names_to = 'var_2',
+                      values_to = 'correlation') %>%
+  ggplot(aes(x = rowname, y = var_2, fill = correlation))+
+  geom_tile()+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))+
+  labs(x = '',
+       y = '')
+```
+
+# Visualise outliers against principal components
+
+To visualise a multidimensional dataset, we can first project the data onto the first principal components. They are calculated to maximise the preserved variance. However, isolation forests are a tree-based approach, and so they may detect poitns in a non-linear way that principal components are not easily able to pick up. Still, we'd expect outlier scores to be higher nearer the outside of the 'data cloud'.
+
+```{r pca}
+pca_cols <- prcomp(raw_data, scale = TRUE)$x[,1:2]
+pca_data <- as.data.frame(cbind(plants, pca_cols))
+```
+
+Now that we have calculate the principal components, we can visualise how the outlier scores are distributed across the two main data axes. 
+
+```{r visualise pca}
+ggplot(pca_data, aes(x = PC1, y = PC2, colour = outlier_score))+
+  geom_point(size = 2, alpha = 0.8)+
+  theme_minimal()+
+  labs(colour = 'Outlier score')
+```
+
+Indeed most high-outlier points are near the edge of the two-PC plot. However, there are a few right in the middle of the cloud. Clearly the tree-based approach paid off and found a few interesting points that linear approaches would not have!
+
