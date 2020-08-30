@@ -1,0 +1,209 @@
+---
+title: "Chopping ingredients"
+description: |
+  Wrestling with nested and untidy string data
+author:
+  - name: Martine Wauben 
+    url: https://github.com/MHWauben
+date: 2020-08-30
+categories:
+  - RStats
+  - Tidytuesday
+  - Data wrangling
+preview: duck.jpg
+output:
+  distill::distill_article:
+    self_contained: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+library(magrittr)
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(ggplot2)
+```
+
+## Tidy Tuesday: 18 August 2020
+
+This week's data can be [found here](https://github.com/rfordatascience/tidytuesday/blob/master/data/2020/2020-08-25/readme.md). It contains data on episodes of *Chopped*, a TV show challenging chefs with cooking particular ingredients. 
+
+```{r load data, message = FALSE}
+chopped <- readr::read_tsv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-08-25/chopped.tsv')
+```
+
+In this post, I will do some data wrangling: unnesting columns that are really multiple rows in one, and then cleaning strings using some basic heuristics so that I can group them more efficiently. 
+
+## Unnesting data
+
+Say I am interested in analysing the sorts of ingredients that participants are given. Unfortunately, in this datasets the episode ingredients are listed episode-by-episode, rather than having a row per ingredient. In "tidyverse language", this can be described as nested data: a single column really contains several rows' worth of data. 
+
+I iterate over appetizer, entree, and dessert ingredients to create a 'long' version of this data, with a row per ingredient as I want it. 
+
+```{r split ingredients}
+unnest_course <- function(course_var){
+  course <- dplyr::enquo(course_var)
+  chopped %>%
+    dplyr::select(season, series_episode, episode_rating, ingredient = !!course) %>%
+    dplyr::mutate(ingredient := strsplit(tolower(ingredient), ", ")) %>%
+    tidyr::unnest() %>%
+    dplyr::mutate(course = course_var)
+}
+
+ingredients <- purrr::map_dfr(c('appetizer', 'entree', 'dessert'), unnest_course)
+```
+
+
+### Unique ingredients
+
+Now, part of the charm of Chopped is that the ingredients are often unique. Therefore, to keep the show fresh for regular watchers, most ingredients appear just once. Prepare yourself for the most meta histogram ever!
+
+```{r orig histogram}
+ingredients %>%
+  dplyr::group_by(ingredient) %>%
+  dplyr::summarise(count = n()) %>%
+  dplyr::group_by(count) %>%
+  dplyr::summarise(count_count = n()) %>%
+  ggplot(aes(x = reorder(count, count_count), y = count_count, fill = -count_count))+
+  geom_histogram(stat = 'identity')+
+  coord_flip()+
+  labs(title = 'How often do ingredients tend to appear?',
+       x = 'Number of times an ingredient appears',
+       y = 'Number of times of an ingredient appears this number of times')+
+  theme_minimal()+
+  theme(legend.position = "none")
+```
+
+Hence, ideally we'd group ingredients together. For example, there are plenty of rum-related ingredients, but 'rum' as an ingredient only appears once!
+
+```{r}
+ingredients %>%
+  dplyr::filter(grepl('(^| )rum( |$)', ingredient)) %>%
+  dplyr::arrange(ingredient)
+```
+
+Can we group these strings in such a way that we can reasonably certainly collapse some together? We will try a few ways, and decide on the best option through a combination of these heuristics.
+
+## Heuristic one: single-word ingredients
+
+For a lot of ingredients, there will be a one-word version, and then a multi-word 'cheffy' version. Take octopus, for example:
+
+```{r octopus}
+ingredients %>%
+  dplyr::filter(grepl('(^| )octopus( |$)', ingredient)) %>%
+  dplyr::arrange(ingredient)
+```
+
+Baby octopus and octopus balls are still octopus... So I'd like to count them as one. To start, I create a vector of single-word ingredients that appear in this dataset. 
+
+```{r single-word ingredients}
+single_words <- ingredients %>%
+  dplyr::filter(grepl("^[a-z'-]*$", ingredient)) %>%
+  dplyr::select(ingredient) %>%
+  dplyr::filter(nchar(ingredient) > 3) %>% # remove odd ones like 'red'
+  unique(.) %>%
+  pull()
+```
+
+Then, for each ingredient in the complete list, I see if there's a string match. If there is, I extract the string match into a new column.
+
+```{r string detection}
+ingredients$single_ingredients <- NA
+for(word in single_words){
+  ingredients <- ingredients %>%
+    dplyr::mutate(single_ingredients = ifelse(!is.na(single_ingredients), 
+                                              single_ingredients,
+                                              stringr::str_match(ingredient, paste0('(^| )', word, '($| )'))))
+}
+ingredients$single_ingredients <- gsub('(^ )|( $)', '', ingredients$single_ingredients)
+
+ingredients %>%
+  dplyr::group_by(single_ingredients) %>%
+  dplyr::summarise(count = n()) %>%
+  dplyr::arrange(-count)
+```
+
+Given that our full ingredients list was `r nrow(ingredients)` rows long, this has allowed us to group about half of the ingredients already!
+
+## Heuristic two: bigrams
+
+Could we do this trick again, with two-word matches? Two-word phrases are known as 'bigrams'; `tidytext`, usually designed for natural language processing, will let us create these bigrams easily. It also has in-built stopword lists, which we can use to remove bigrams that include things like 'of' or 'and'. 
+
+```{r two-word ingredients}
+bigrams <- ingredients %>%
+  dplyr::filter(is.na(single_ingredients)) %>%
+  dplyr::select(ingredient) %>%
+  dplyr::mutate(ingredient = stringr::str_extract_all(ingredient, pattern = '[a-z]+ [a-z]+')) %>%
+  tidyr::unnest() %>%
+  tidyr::separate(ingredient, c("word1", "word2"), sep = " ") %>%
+  dplyr::filter(!word1 %in% tidytext::stop_words$word) %>%
+  dplyr::filter(!word2 %in% tidytext::stop_words$word)%>%
+  tidyr::unite(bigram, word1, word2, sep = ' ') %>%
+  unique(.) %>%
+  pull(bigram) 
+```
+
+Now we use the same loop to go through the bigram ingrediens.
+
+```{r bigram detection}
+ingredients$bigram_ingredients <- NA
+for(bigram in bigrams){
+  ingredients <- ingredients %>%
+    dplyr::mutate(bigram_ingredients = ifelse(is.na(bigram_ingredients), # If we already have a bigram ingredient, keep it
+                                              stringr::str_match(ingredient, as.character(bigram)),
+                                              bigram_ingredients))
+}
+```
+
+```{r bigram helps}
+ingredients %>%
+  dplyr::group_by(bigram_ingredients) %>%
+  dplyr::summarise(count = n()) %>%
+  dplyr::arrange(-count)
+```
+
+This covers roughly the same number of rows as the single ingredients! But possibly not the same ones.
+
+## Combine heuristics
+
+Since the single-word heuristic will group more ingredients into one, that one takes precedence. Wherever that one didn't match, we can fill in the bigram instead.
+
+```{r ingredient groups}
+ingr_grouped <- ingredients %>%
+  dplyr::mutate(ingr_group = ifelse(!is.na(single_ingredients), single_ingredients, bigram_ingredients))
+
+ingr_grouped %>%
+  dplyr::group_by(ingr_group) %>%
+  dplyr::summarise(count = n()) %>%
+  dplyr::arrange(-count)
+```
+
+This has helped us label nearly every row! Judging from the ingredient group values we get back, many groups were single-word only; however, "ice cream" apparently shows up lots on this show! 
+
+However, the real question is: how many groups are now bigger than they were before?
+
+```{r grouped histogram}
+ingr_grouped %>%
+  dplyr::filter(!is.na(ingr_group)) %>%
+  dplyr::group_by(ingr_group) %>%
+  dplyr::summarise(count = n()) %>%
+  dplyr::group_by(count) %>%
+  dplyr::summarise(count_count = n()) %>%
+  ggplot(aes(x = count, y = count_count, fill = -count_count))+
+  geom_histogram(stat = 'identity')+
+  scale_x_reverse()+
+  coord_flip()+
+  labs(title = 'After grouping: how often do ingredients tend to appear?',
+       subtitle = 'Did our heuristics for grouping "cheffy" ingredients work?',
+       x = 'Number of times an ingredient appears',
+       y = 'Number of times of an ingredient appears this number of times')+
+  theme_minimal()+
+  theme(legend.position = "none")
+```
+
+Although there is still a significant number of items appearing just once, the tail is longer: there are now ingredient groups that appear 20+ times, which was not the case before!
+
+
+
+
