@@ -1,5 +1,25 @@
 [
   {
+    "path": "posts/2020-08-30_chopped-ingredients/",
+    "title": "Chopping ingredients",
+    "description": "Wrestling with nested and untidy string data",
+    "author": [
+      {
+        "name": "Martine Wauben",
+        "url": "https://github.com/MHWauben"
+      }
+    ],
+    "date": "2020-08-30",
+    "categories": [
+      "RStats",
+      "Tidytuesday",
+      "Data wrangling"
+    ],
+    "preview": "posts/2020-08-30_chopped-ingredients/duck.jpg",
+    "last_modified": "2020-08-30T12:40:55+01:00",
+    "input_file": "2020-08-20_chopped-ingredients.utf8.md"
+  },
+  {
     "path": "posts/2020-08-23_endangered-plants/",
     "title": "Uniquely threatened plants",
     "description": "Detecting outliers in plant threat profiles with isolation forests",
