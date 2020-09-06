@@ -1,5 +1,26 @@
 [
   {
+    "path": "posts/2020-09-06_crop-yields/",
+    "title": "Tractor timeseries",
+    "description": "Country-by-country timeseries forecasting with modeltime",
+    "author": [
+      {
+        "name": "Martine Wauben",
+        "url": "https://github.com/MHWauben"
+      }
+    ],
+    "date": "2020-09-06",
+    "categories": [
+      "RStats",
+      "Tidytuesday",
+      "Timeseries",
+      "Forecasting"
+    ],
+    "preview": "posts/2020-09-06_crop-yields/tractor.jpg",
+    "last_modified": "2020-09-06T09:34:14+01:00",
+    "input_file": "2020-09-06_crop-yields.utf8.md"
+  },
+  {
     "path": "posts/2020-08-30_chopped-ingredients/",
     "title": "Chopping ingredients",
     "description": "Wrestling with nested and untidy string data",

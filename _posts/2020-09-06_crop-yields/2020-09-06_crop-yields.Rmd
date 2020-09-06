@@ -1,0 +1,210 @@
+---
+title: "Tractor timeseries"
+description: |
+  Country-by-country timeseries forecasting with modeltime
+author:
+  - name: Martine Wauben 
+    url: https://github.com/MHWauben
+date: 2020-09-06
+categories:
+  - RStats
+  - Tidytuesday
+  - Timeseries
+  - Forecasting
+preview: tractor.jpg
+output:
+  distill::distill_article:
+    self_contained: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+library(magrittr)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(janitor)
+library(lubridate)
+library(ggplot2)
+library(modeltime)
+```
+
+## Tidy Tuesday: 18 August 2020
+
+This week's data can be [found here](https://github.com/rfordatascience/tidytuesday/blob/master/data/2020/2020-09-01/readme.md). I selected the data from Our World in Data on tractor use.
+
+```{r load data, message = FALSE}
+tractors <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-09-01/cereal_yields_vs_tractor_inputs_in_agriculture.csv')
+```
+
+We have to make some slight changes to make the data behave as we want it to. 
+
+```{r join data}
+data <- tractors %>%
+  dplyr::filter(!is.na(Year)) %>%
+  dplyr::mutate(Year = lubridate::ymd(paste0(Year, '-01-01'))) %>%
+  janitor::clean_names() %>%
+  dplyr::arrange(entity, year)
+```
+
+## Timeseries forecasting
+
+The modeltime package allows us to apply common timeseries methods using the same syntax as the tidymodels package family. Let's test it out!
+
+```{r sample num}
+number_to_sample <- 12
+```
+
+To keep the analysis manageable, we will select `r number_to_sample` entities (which have at least 10 years' worth of data) to visualise and analyse. 
+
+```{r sample}
+entity_filter <- data %>%
+  dplyr::group_by(entity) %>%
+  dplyr::filter(!is.na(tractors_per_100_sq_km_arable_land) & dplyr::n() > 10)
+
+entity_shown <- sort(sample(unique(entity_filter$entity), number_to_sample))
+entity_shown
+```
+
+
+For this test, we will try to predict the number of tractors per 100 square km of arable land in each country over time. 
+
+```{r create modeltime object}
+data %>%
+  dplyr::filter(entity %in% entity_shown) %>%
+  dplyr::group_by(entity) %>%
+  timetk::plot_time_series(year, tractors_per_100_sq_km_arable_land, 
+                           .interactive = T, .smooth = FALSE,
+                           .facet_ncol = 4,
+                           .title = paste0('Tractors per 100 square km of arable land'))
+```
+
+
+First, we have to create a train-test split. We can do this using the tidymodels package `rsample`. We apply this to each entity separately.
+
+From the visualisation above, it looks like there are significant portions of the data which are empty; we'll have to filter those out before we select train/test data. 
+
+Moreover, unfortunately timeseries packages expect more than one observation per year. We will fake some data, as if we have quarterly measurements (but the value is actually the same three extra times each year). 
+
+```{r split}
+data_dupe <- data %>%
+  dplyr::filter(entity %in% entity_shown) %>%
+  dplyr::filter(!is.na(tractors_per_100_sq_km_arable_land)) %>%
+  dplyr::select(year, tractors_per_100_sq_km_arable_land, entity) 
+data_1 <- dplyr::mutate(data_dupe, year = year %m+% months(3))
+data_2 <- dplyr::mutate(data_dupe, year = year %m+% months(6))
+data_3 <- dplyr::mutate(data_dupe, year = year %m+% months(9))
+data_dupe <- rbind(data_dupe, data_1, data_2, data_3)
+
+entities <- data_dupe %>%
+  dplyr::arrange(entity, year) %>%
+  dplyr::group_split(entity) %>%
+  setNames(entity_shown)
+split_time <- function(entity){
+  rsample::initial_time_split(entity, prop = 0.9)
+}
+splits <- purrr::map(entities, split_time)
+```
+
+Then, we initialise models. The models we choose will have a date feature, and so the modeltime package will be activated. Again, because we have to do this country-by-country, we have to use purrr to apply it to each country separately. 
+
+```{r models, warning = FALSE}
+model_fit_arima_no_boost <- function(split){
+  modeltime::arima_reg() %>%
+    parsnip::set_engine(engine = "auto_arima") %>%
+    parsnip::fit(tractors_per_100_sq_km_arable_land ~ year, 
+                 data = rsample::training(split))
+}
+arima_no_boost <- purrr::map(splits, model_fit_arima_no_boost)
+
+model_fit_ets <- function(split){
+  modeltime::exp_smoothing() %>%
+    parsnip::set_engine(engine = "ets") %>%
+    parsnip::fit(tractors_per_100_sq_km_arable_land ~ year, 
+                 data = rsample::training(split))
+}
+ets <- purrr::map(splits, model_fit_ets)
+
+model_fit_prophet <- function(split){
+  modeltime::prophet_reg() %>%
+    parsnip::set_engine(engine = "prophet") %>%
+    parsnip::fit(tractors_per_100_sq_km_arable_land ~ year, data = 
+                   rsample::training(split))
+}
+proph <- purrr::map(splits, model_fit_prophet)
+```
+
+To allow us to compare each of the models on the country-level, we have to create a model table list that combines them all country-by-country.
+
+```{r modeltime table}
+models_tbl <- list()
+for(i in entity_shown){
+  models_tbl[[i]] <- modeltime::modeltime_table(
+    arima_no_boost[[i]],
+    ets[[i]],
+    proph[[i]])
+}
+```
+
+Then, to see which model did best, we have to calibrate our models against the testing data.
+
+```{r calibration}
+calibration_tbl <- list()
+for(entity in entity_shown){
+  calibration_tbl[[entity]] <- models_tbl[[entity]] %>%
+    modeltime::modeltime_calibrate(new_data = rsample::testing(splits[[entity]]))
+}
+```
+
+Now that the models are applied to the testing data, we can visualise what each model forecasts for each of the countries. I show the plot for just a few of them!
+
+```{r visualise forecasts}
+p <- list()
+for(entity in sample(entity_shown, 4)){
+  p[[entity]] <- calibration_tbl[[entity]] %>%
+    modeltime::modeltime_forecast(
+        new_data    = rsample::testing(splits[[entity]]),
+        actual_data = entities[[entity]]
+    ) %>%
+    plot_modeltime_forecast(.title = paste0(entity, ': Forecasted number of tractors per 100sq km of arable land'))
+}
+htmltools::tagList(p)
+```
+
+Although the visualisations are helpful, we can also calculate actual accuracy metrics to see which model is best. 
+
+```{r accuracy metrics}
+accuracy_fun <- function(entity){
+  calibration_tbl[[entity]] %>%
+    modeltime::modeltime_accuracy() %>%
+    dplyr::mutate(entity = entity) %>%
+    dplyr::select(entity, tidyselect::everything())
+}
+accuracy_metrics <- purrr::map_dfr(entity_shown, accuracy_fun) %>%
+  dplyr::arrange(entity, mae)
+accuracy_metrics
+```
+
+It looks like different models work well for different countries. This makes sense, because the different countries have very differently shaped timeseries. 
+However, we're not interested in the forecasts for years we already have. To be useful, we want to forecast forward. To do this, we re-fit the model to the whole dataset, and then forecast. 
+
+```{r forecast forward, warning = FALSE}
+refit_tbl <- list()
+for(entity in entity_shown){
+  refit_tbl[[entity]] <- calibration_tbl[[entity]] %>%
+    modeltime::modeltime_refit(data = entities[[entity]])
+}
+
+forecasts <- list()
+for(entity in sample(entity_shown, 4)){
+  forecasts[[entity]] <- refit_tbl[[entity]] %>%
+    modeltime_forecast(h = "10 years", actual_data = entities[[entity]]) %>%
+    plot_modeltime_forecast(.title = paste0(entity, ': Forecast'))
+}
+htmltools::tagList(forecasts)
+```
+
+The refits are more accurate because the models can now use the full dataset, rather than just the timeseries up to the testing segment. However, the testing metrics above should still be used to select the best forecasting model!
+
+
+
