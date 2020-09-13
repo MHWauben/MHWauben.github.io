@@ -1,5 +1,26 @@
 [
   {
+    "path": "posts/2020-09-13_friends-text/",
+    "title": "The language of Friends",
+    "description": "What sort of company does the cast of Friends keep?",
+    "author": [
+      {
+        "name": "Martine Wauben",
+        "url": "https://github.com/MHWauben"
+      }
+    ],
+    "date": "2020-09-13",
+    "categories": [
+      "RStats",
+      "Tidytuesday",
+      "NLP",
+      "Unsupervised"
+    ],
+    "preview": "posts/2020-09-13_friends-text/name-embeddings.png",
+    "last_modified": "2020-09-13T16:20:26+01:00",
+    "input_file": "2020-09-06_friends-text.utf8.md"
+  },
+  {
     "path": "posts/2020-09-06_crop-yields/",
     "title": "Tractor timeseries",
     "description": "Country-by-country timeseries forecasting with modeltime",
@@ -76,10 +97,11 @@
       "RStats",
       "Tidytuesday",
       "Machine learning",
-      "Supervised"
+      "Supervised",
+      "NLP"
     ],
     "preview": "posts/2020-08-16_avatar-appa/avatar-heatmap.png",
-    "last_modified": "2020-08-16T21:46:29+01:00",
+    "last_modified": "2020-09-13T16:29:59+01:00",
     "input_file": "2020-08-16_avatar-appa.utf8.md"
   },
   {
