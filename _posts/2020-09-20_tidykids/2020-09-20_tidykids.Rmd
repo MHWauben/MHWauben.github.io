@@ -1,0 +1,242 @@
+---
+title: "US Spending on kids"
+description: |
+  Using timeseries clustering to detect groups of government spending without domain knowledge
+author:
+  - name: Martine Wauben 
+    url: https://github.com/MHWauben
+date: 2020-09-20
+categories:
+  - RStats
+  - Tidytuesday
+  - Unsupervised
+  - Clustering
+preview: plot clusters-1.png
+output:
+  distill::distill_article:
+    self_contained: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+library(magrittr)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(cluster)
+library(clusterCrit)
+library(RColorBrewer)
+```
+
+## Tidy Tuesday: 20 September 2020
+
+This week's data can be [found here](https://github.com/rfordatascience/tidytuesday/blob/master/data/2020/2020-09-15/readme.md). This data contains US Govt spending data, on various types of expenditure related to children. 
+
+```{r load data, message = FALSE}
+kids <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-09-15/kids.csv')
+```
+
+This dataset is in 'long' format: in other words, there are not separate columns for different types of expenditure. Instead, the 'variable' column specifies the type of expenditure. Note: the tidykids package comes with a [data dictionary](https://jrosen48.github.io/tidykids/articles/tidykids-codebook.html) to find out what each of the variables stand for.
+
+To help with visualisation, therefore, we will randomly sample some variables and states to visualise. After doing this, this kind of data structure is helpful for ggplot:
+
+```{r exlporatory plot, fig.height = 10}
+vars_to_vis <- sample(unique(kids$variable),5)
+states_to_vis <- sample(unique(kids$state), 5)
+kids %>%
+  tidyr::pivot_longer(cols = raw:inf_adj_perchild,
+                      names_to = 'value_type',
+                      values_to = 'value') %>%
+  dplyr::filter(variable %in% vars_to_vis & state %in% states_to_vis) %>%
+  ggplot(aes(x = year, y = value, colour = variable))+
+  geom_line()+
+  facet_wrap(state~value_type, scales = "free_y", ncol = 3)+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+```
+
+Now, quite clearly some of the timeseries are more similar than others. These timeseries are likely to correlated in several ways:
+
+* Timeseries are often auto-correlated: point t is strongly correlated with point t-1
+* Metrics from the same state, will probably go up and down similarly
+* Some metrics are from more similar domains than others: different kinds of healthcare expenditure probably look more similar to each other than they do to library expenditure
+
+Can we cluster these timeseries together, to find out which timeseries are in similar domains?
+
+## Timeseries clustering
+
+For clustering, we need to transform the data into a matrix where each column is a timepoint (ie. a year in this case). This means that each row ID is a state-variable combination. 
+
+Moreover, the original data has three versions of each value: the raw value, the inflation-adjusted value, and the inflation-adjusted value per child in that state in that year. We should not mix these up into a single matrix, so three matrices will be required. 
+
+So, to create the numeric matrices we'll need for clustering, we need to do some data prep. 
+
+Crucially, we are not interested in clustering together the big states or the big sources of expenditure; rather, we're interested in the shape of the timeseries, ie. correlated peaks and troughs. Hence we need to index all the timeseries based on their first available value. 
+
+```{r prep data}
+# Transform data to column-per-year
+ts_wide <- kids %>%
+  # Remove 0 rows to avoid infinities
+  dplyr::filter(raw > 0) %>%
+  dplyr::group_by(state, variable) %>%
+  # For each state and variable, index by the first non-zero value
+  dplyr::mutate(raw = raw / dplyr::first(raw),
+                inf_adj = inf_adj / dplyr::first(inf_adj),
+                inf_adj_perchild = inf_adj_perchild / dplyr::first(inf_adj_perchild)) %>%
+  dplyr::ungroup() %>%
+  # Create single ID column
+  dplyr::mutate(ts_id = paste(state, variable, sep = '_')) %>%
+  # Make sure the years will be pivoted in the right order
+  dplyr::arrange(year) %>%
+  tidyr::pivot_wider(id_cols = ts_id,
+                     names_from = year,
+                     values_from = raw:inf_adj_perchild,
+                     # Fill empty values (with 0 budget) with 0
+                     values_fill = 0) %>%
+  dplyr::arrange(ts_id)
+
+# Save the rownames and available years
+ts_ids <- ts_wide$ts_id
+ts_years <- stringr::str_extract(colnames(ts_wide), '[0-9]+')
+
+# Separate dataframes for each metric
+raw <- dplyr::select(ts_wide, ts_id, tidyselect::starts_with('raw'))
+inf_adj <- dplyr::select(ts_wide, ts_id, tidyselect::matches('inf_adj_[0-9]'))
+inf_adj_perchild <- dplyr::select(ts_wide, ts_id, tidyselect::matches('perchild'))
+
+# Create timeseries matrices for each metric
+ts_matrices <- list(raw = raw[,2:ncol(raw)],
+                    inf_adj = inf_adj[,2:ncol(inf_adj)],
+                    inf_adj_perchild = inf_adj_perchild[,2:ncol(inf_adj_perchild)])
+ts_matrices <- purrr::map(ts_matrices, as.matrix)
+```
+
+Now that we have the timeseries prepared, we can start clustering!
+
+We will use the [K-Medoids (aka PAM)](https://en.wikipedia.org/wiki/K-medoids) algorithm to do so, because then we can visualise the selected timeseries as actual datapoints rather than imputed ones. 
+
+This algorithm has one crucial drawback: it cannot decide, by itself, how many clusters to look for. Therefore, we need to do some hyperparameter tuning. We give a range of acceptable numbers of clusters, and choose the final number of clusters on the basis of the [Davies-Bouldin](https://tomron.net/2016/11/30/davies-bouldin-index/comment-page-1/) score of the resulting clusters.
+
+```{r select number of clusters}
+cluster_select <- function(data, try_clusters){
+  clusterings <- lapply(try_clusters, function(x) cluster::pam(data, x))
+  db_values <- sapply(seq_along(clusterings), function(x) 
+    clusterCrit::intCriteria(data, as.integer(clusterings[[x]]$clustering),
+                c("Davies_Bouldin")))
+  plot <- ggplot(data.frame(Clusters = try_clusters, db = unlist(db_values)),
+         aes(Clusters, db)) +
+    geom_line(size = 1) +
+    geom_point(size = 3) +
+    theme_bw()
+  
+  num_clusters_index <- which.min(unlist(db_values))
+  num_clusters <- try_clusters[num_clusters_index]
+  
+  return(list(plot = plot,
+              clusterings = clusterings,
+              num_clusters_index = num_clusters_index,
+              num_clusters = num_clusters))
+}
+```
+
+Now that we have a function to select the number of clusters, let's run it on each of the actual data metrics!
+
+```{r cluster data}
+try_clusters <- seq(8, 16, 2)
+
+ts_clusters <- purrr::map(ts_matrices, cluster_select, try_clusters)
+```
+
+For the raw values, we selected `r ts_clusters$raw$num_clusters` clusters; for the inflation-adjusted ones, we chose `r ts_clusters$inf_adj$num_clusters`, and for the inflation-adjusted figures per child, we chose `r ts_clusters$inf_adj_perchild$num_clusters`.
+
+However, to properly understand what these clusters mean, we need to plot them. First, we have to assign the cluster assignments back onto the data. 
+
+```{r prep data function}
+prepare_data <- function(metric){
+  data <- get(metric)
+  raw_data <- ts_matrices[[metric]]
+  clusterings <- ts_clusters[[metric]]$clusterings
+  num_clusters_index <- ts_clusters[[metric]]$num_clusters_index
+  data_plot_t <- data.frame(class = as.factor(clusterings[[num_clusters_index]]$clustering),
+                            data) %>%
+    tidyr::pivot_longer(cols = starts_with(metric),
+                        names_to = 'variable',
+                        values_to = 'value') %>%
+    dplyr::mutate(measure = gsub('[a-zA-Z ]*_', '', ts_id),
+                  Time = as.integer(gsub(paste0(metric, '_'), '', variable)),
+                  ID = rep(1:nrow(raw_data), ncol(raw_data)))
+  return(data_plot_t)
+}
+```
+
+```{r prep plotting data}
+metrics <- c('raw', 'inf_adj', 'inf_adj_perchild')
+data_plot <- purrr::map(metrics, prepare_data) %>%
+  setNames(metrics)
+```
+
+With the data prepared, we have to also save the medoids of each cluster separately, so we can clearly plot what trend the cluster predicts. 
+
+```{r prep medoids function}
+prepare_centers <- function(metric){
+  clusterings <- ts_clusters[[metric]]$clusterings
+  num_clusters_index <- ts_clusters[[metric]]$num_clusters_index
+  num_clusters <- ts_clusters[[metric]]$num_clusters
+  centers_t <- data.frame(clusterings[[num_clusters_index]]$medoids,
+                          class = 1:num_clusters) %>%
+    tidyr::pivot_longer(cols = starts_with(metric),
+                        names_to = 'variable',
+                        values_to = 'value') %>%
+    dplyr::arrange(variable, class) %>%
+    dplyr::mutate(Time = as.integer(gsub(paste0(metric, '_'), '', variable)),
+                  ID = value)
+  return(centers_t)
+}
+```
+
+```{r calculate medoids}
+centers <- purrr::map(metrics, prepare_centers) %>%
+  setNames(metrics)
+```
+
+Now that we have both the data and the centers saved, we can plot them on top of each other. We create lines for each state's timeseries for each type of expenditure, and colour those lines by the type of expenditure. After, we top the cluster medoids on top so we can see what the overarching pattern is that the PAM algorithm picked up on. 
+
+```{r plot clusters}
+for(i in metrics){
+  print(
+    ggplot(data_plot[[i]], aes(Time, value, group = ts_id)) +
+      facet_wrap(~class, ncol = 2, scales = "free_y") +
+      geom_line(aes(colour = measure), alpha = 0.65)+
+      scale_color_manual(values = pals::cols25(n = 25)) +
+      geom_line(data = centers[[i]], aes(Time, value, group= NULL), 
+                color = "firebrick1", alpha = 0.8, size = 1.2) +
+      theme_bw()+
+      labs(title = 'Different types of child-related US expenditure',
+           subtitle = paste0('Values are ', i, '. Heavy red line indicates cluster medoids.'),
+           x = 'Year',
+           y = 'Value')+
+      theme(legend.text = element_text(size = 6))
+  )
+}
+
+```
+
+Clearly, the trends are very similar for raw and inflation-adjusted figures. However, transforming the figure to be per child results in slightly different groupings. 
+
+However, the powerful thing here is that some clusters are just one colour - for example unemployment has a very characteristic shape, with a spike around the 2008-2010 recession - and some clusters have grouped together different colours. These types of spending, therefore, are correlated: their spending goes up and down in similar ways. Hence, without knowing anything about the content of these spending types, we are able to group them by domain or political leaning. 
+
+To see more clearly, we can count how many timeseries from each measure appear in each cluster. Some clusters are more 'pure', containing only one or two types of spending; other clusters are more mixed, and may start to reflect how different states made different decisions. This table is based on the raw (not inflation-adjusted) data.
+
+```{r cluster table}
+knitr::kable(data_plot[[1]] %>%
+    dplyr::group_by(measure, class) %>%
+    dplyr::summarise(number = dplyr::n()) %>%
+    tidyr::pivot_wider(id_cols = measure,
+                       names_from = 'class',
+                       values_from = 'number',
+                       values_fill = 0))
+```
+
+To check this fully automated work, you can now go back to the [tidykids codebook](https://jrosen48.github.io/tidykids/articles/tidykids-codebook.html) and see if we agree with the domain groupings the algorithm has made!
+

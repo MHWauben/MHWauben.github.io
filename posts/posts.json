@@ -1,5 +1,26 @@
 [
   {
+    "path": "posts/2020-09-20_tidykids/",
+    "title": "US Spending on kids",
+    "description": "Using timeseries clustering to detect groups of government spending without domain knowledge",
+    "author": [
+      {
+        "name": "Martine Wauben",
+        "url": "https://github.com/MHWauben"
+      }
+    ],
+    "date": "2020-09-20",
+    "categories": [
+      "RStats",
+      "Tidytuesday",
+      "Unsupervised",
+      "Clustering"
+    ],
+    "preview": "posts/2020-09-20_tidykids/plot clusters-1.png",
+    "last_modified": "2020-09-20T11:08:20+01:00",
+    "input_file": "2020-09-20_tidykids.utf8.md"
+  },
+  {
     "path": "posts/2020-09-13_friends-text/",
     "title": "The language of Friends",
     "description": "What sort of company does the cast of Friends keep?",
