@@ -1,0 +1,90 @@
+---
+title: "Try, and try again"
+description: |
+  Unsuccessful climbing expeditions before the first ascent of each Himalayan peak
+author:
+  - name: Martine Wauben 
+    url: https://github.com/MHWauben
+date: 2020-09-27
+categories:
+  - RStats
+  - Tidytuesday
+  - Data wrangling
+preview: 
+output:
+  distill::distill_article:
+    self_contained: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+library(magrittr)
+library(readr)
+library(dplyr)
+library(ggplot2)
+```
+
+## Tidy Tuesday: 22 September 2020
+
+This week's data can be [found here](https://github.com/rfordatascience/tidytuesday/blob/master/data/2020/2020-09-22/readme.md). This data is about climbing expeditions in the Himalayas.
+
+```{r load data, message = FALSE}
+expeditions <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-09-22/expeditions.csv')
+```
+
+I want to use this data to visualise human resilience; for each peak, how many failed attempts did we try before we made it? How far did each failed attempt get?
+
+First, let's create a dataframe of the earliest successful attempts of each peak. For some expeditions, highpoint dates are missing; for this visualisation I'm ignoring these, because it will mess with the later visualisations if we don't have an exact date to work with. 
+
+```{r successes}
+success_df <- expeditions %>%
+  dplyr::filter(grepl("Success", termination_reason)) %>%
+  dplyr::arrange(peak_id, highpoint_date) %>%
+  dplyr::group_by(peak_id) %>%
+  dplyr::slice(1)
+success <- dplyr::transmute(success_df, peak_id, first_success = highpoint_date)
+```
+
+Then, we need to filter the expeditions down to only include expeditions up to and including the first successful one. Moreover, there are so many peaks that we are going to filter it down to the peaks that took longest to conquer! We use the `quantile` function for this, so we can calculate the percentile of peaks that tooks longest to conquer.
+
+Moreover, we save a list of all the peaks this method selected, so we can use that inside the plot.
+
+```{r expeditions leading up}
+leading_up <- dplyr::left_join(expeditions, success, by = 'peak_id') %>%
+  dplyr::filter(highpoint_date <= first_success) %>%
+  dplyr::group_by(peak_id) %>%
+  dplyr::mutate(time_tried = first_success - min(highpoint_date)) %>%
+  dplyr::ungroup() %>%
+  dplyr::filter(time_tried >= quantile(time_tried, 0.9))
+peaks_selected <- unique(leading_up$peak_id)
+```
+
+Now to create the plot!
+
+Points designate expeditions. I use `geom_ribbon` to create the sense of 'mountains' for each peak. To get this to look good, I create a manual palette to choose colours from. 
+
+Then, the successful attempts are added separately, and given a star shape to make them stand out. 
+
+```{r plot points}
+palette <- colorRampPalette(colors=c("lightcyan1", "slategray"))
+cols <- rev(palette(length(peaks_selected)))
+
+ggplot(leading_up, aes(x = highpoint_date, y = highpoint_metres, 
+                       colour = peak_id, fill = peak_id))+
+  geom_point(size = 1, alpha = 1)+
+  geom_line()+
+  geom_ribbon(aes(ymin=4000, ymax=highpoint_metres), alpha = 0.15) +
+  geom_point(data = dplyr::filter(success_df, peak_id %in% peaks_selected), shape = 8)+
+  scale_fill_manual(values = cols)+
+  scale_colour_manual(values = cols)+
+  theme_minimal()+
+  theme(legend.position = 'none', 
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank())+
+  labs(title = 'Try, and try again',
+       subtitle = 'Unsuccessful climbing expeditions before the first ascent of Himalayan peaks',
+       x = '',
+       y = 'Highest point of expedition')
+```
+
+
