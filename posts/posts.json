@@ -1,5 +1,25 @@
 [
   {
+    "path": "posts/2020-09-27_himalaya-expeditions/",
+    "title": "Try, and try again",
+    "description": "Unsuccessful climbing expeditions before the first ascent of each Himalayan peak",
+    "author": [
+      {
+        "name": "Martine Wauben",
+        "url": "https://github.com/MHWauben"
+      }
+    ],
+    "date": "2020-09-27",
+    "categories": [
+      "RStats",
+      "Tidytuesday",
+      "Data wrangling"
+    ],
+    "preview": "posts/2020-09-27_himalaya-expeditions/2020-09-27_himalaya-expeditions_files/figure-html5/plot points-1.png",
+    "last_modified": "2020-09-27T11:50:54+01:00",
+    "input_file": "2020-09-27_himalaya-expeditions.utf8.md"
+  },
+  {
     "path": "posts/2020-09-20_tidykids/",
     "title": "US Spending on kids",
     "description": "Using timeseries clustering to detect groups of government spending without domain knowledge",
